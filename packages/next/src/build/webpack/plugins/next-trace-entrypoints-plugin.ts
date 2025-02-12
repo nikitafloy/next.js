@@ -19,7 +19,7 @@ import picomatch from 'next/dist/compiled/picomatch'
 import { getModuleBuildInfo } from '../loaders/get-module-build-info'
 import { getPageFilePath } from '../../entries'
 import { resolveExternal } from '../../handle-externals'
-import { isStaticMetadataRoute } from '../../../lib/metadata/is-metadata-route'
+import { isMetadataRouteFile } from '../../../lib/metadata/is-metadata-route'
 
 const PLUGIN_NAME = 'TraceEntryPointsPlugin'
 export const TRACE_IGNORES = [
@@ -190,9 +190,9 @@ export class TraceEntryPointsPlugin implements webpack.WebpackPluginInstance {
       for (const entrypoint of compilation.entrypoints.values()) {
         const entryFiles = new Set<string>()
 
-        for (const chunk of entrypoint
-          .getEntrypointChunk()
-          .getAllReferencedChunks()) {
+        for (const chunk of process.env.NEXT_RSPACK
+          ? entrypoint.chunks
+          : entrypoint.getEntrypointChunk().getAllReferencedChunks()) {
           for (const file of chunk.files) {
             if (isTraceable(file)) {
               const filePath = nodePath.join(outputPath, file)
@@ -240,14 +240,11 @@ export class TraceEntryPointsPlugin implements webpack.WebpackPluginInstance {
         )
 
         if (entrypoint.name.startsWith('app/') && this.appDir) {
-          const appDirRelativeEntryPath =
-            this.buildTraceContext.entriesTrace?.absolutePathByEntryName[
-              entrypoint.name
-            ]?.replace(this.appDir, '')
-
-          const entryIsStaticMetadataRoute =
-            appDirRelativeEntryPath &&
-            isStaticMetadataRoute(appDirRelativeEntryPath)
+          const entryIsStaticMetadataRoute = isMetadataRouteFile(
+            entrypoint.name.substring('app/'.length),
+            [],
+            false
+          )
 
           // Include the client reference manifest in the trace, but not for
           // static metadata routes, for which we don't generate those.
@@ -580,6 +577,23 @@ export class TraceEntryPointsPlugin implements webpack.WebpackPluginInstance {
 
   apply(compiler: webpack.Compiler) {
     compiler.hooks.compilation.tap(PLUGIN_NAME, (compilation) => {
+      compilation.hooks.processAssets.tapAsync(
+        {
+          name: PLUGIN_NAME,
+          stage: webpack.Compilation.PROCESS_ASSETS_STAGE_SUMMARIZE,
+        },
+        (_assets: any, callback: any) => {
+          this.createTraceAssets(compilation, traceEntrypointsPluginSpan)
+            .then(() => callback())
+            .catch((err) => callback(err))
+        }
+      )
+
+      // rspack doesn't support all API below so only create trace assets
+      if (process.env.NEXT_RSPACK) {
+        return
+      }
+
       const readlink = async (path: string): Promise<string | null> => {
         try {
           return await new Promise((resolve, reject) => {

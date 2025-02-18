@@ -43,6 +43,10 @@ jobs:
         with:
           fetch-depth: 25
 
+      - name: Debug Turborepo
+        run: |
+          echo "TURBO_API: '$TURBO_API'"
+
       - name: check for docs only change
         id: docs-change
         run: |
